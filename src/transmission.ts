@@ -1,8 +1,8 @@
 import axios, {AxiosInstance} from "axios";
 import fs from "fs";
-import async from "async";
 import {Buffer} from "safe-buffer";
 import uuid from "uuid/v4";
+import unique from "array-unique";
 
 export interface TransmissionConfig {
     host?: string
@@ -168,51 +168,51 @@ export interface IAddConfig {
     /**
      * pointer to a string of one or more cookies.
      */
-    cookies:string,
+    cookies?:string,
     /**
      * path to download the torrent to
      */
-    "download-dir":string,
+    "download-dir"?:string,
     /**
      * filename or URL of the .torrent file
      */
-    filename:string,
+    filename?:string,
     /**
      * base64-encoded .torrent content
      */
-    metainfo:string,
+    metainfo?:string,
     /**
      * if true, don't start the torrent
      */
-    paused:boolean,
+    paused?:boolean,
     /**
      * maximum number of peers
      */
-    "peer-limit":number,
+    "peer-limit"?:number,
     /**
      * torrent's bandwidth tr_priority_t
      */
-    bandwidthPriority:number,
+    bandwidthPriority?:number,
     /**
      * Ids of file(s) to download
      */
-    "files-wanted":Array<number>,
+    "files-wanted"?:Array<number>,
     /**
      * Ids of file(s) to not download
      */
-    "files-unwanted":Array<number>,
+    "files-unwanted"?:Array<number>,
     /**
      * Ids of high-priority file(s)
      */
-    "priority-high":Array<number>,
+    "priority-high"?:Array<number>,
     /**
      * Ids of low-priority file(s)
      */
-    "priority-low":Array<number>,
+    "priority-low"?:Array<number>,
     /**
      * Ids of normal-priority file(s)
      */
-    "priority-normal":Array<number>,
+    "priority-normal"?:Array<number>,
 }
 
 interface ICallback {
@@ -385,9 +385,44 @@ export default class Transmission {
         }
     }
 
-    async poll(){
-        let ids = this.pollJobs.map(job=>job.torrentId);
 
+    private startPolling(id: number, desiredState: TransmissionStatus, cb: ICallback) {
+        console.log(`add ${id} to pollJob`);
+        let pollJobs : Array<pollJob>;
+        //check if same job exist
+        if(this.pollJobs.find(job=>job.torrentId===id&&job.desiredState===desiredState)){
+            pollJobs =  this.pollJobs.map(job=>{
+                if(job.torrentId===id&&job.desiredState===desiredState)
+                    job.callBack.push(cb);
+
+                return job;
+            })
+        }
+        else{
+            pollJobs = [
+                ...this.pollJobs,
+                {
+                    torrentId:id,
+                    callBack:[cb],
+                    desiredState
+                }
+            ]
+        }
+
+        this.pollJobs = pollJobs;
+
+        console.log(`PollJobs : ${this.pollJobs.map(job=>job.torrentId).join(", ")}`);
+
+        if(!this.polling){
+            this.polling = true;
+            this.poll();
+        }
+    }
+
+    async poll(){
+        let ids = unique(this.pollJobs.map(job=>job.torrentId));
+
+        console.log(`poll with ids : ${ids.join(", ")}`);
         let torrents = await this.get(ids);
 
         //re add only jobs with unmeeted desired state
@@ -408,7 +443,7 @@ export default class Transmission {
         });
 
         if(this.pollJobs.length>0)
-            this.pollTimeout = setTimeout(this.poll, this.pollInterval);
+            this.pollTimeout = setTimeout(()=> this.poll(), this.pollInterval);
         else
             this.polling = false;
     }
@@ -421,9 +456,11 @@ export default class Transmission {
      */
     async callServer(query): Promise<IRPCResponse> {
         try{
-            return <IRPCResponse>await this.axiosInstance.request({
-                data: query
-            })
+            console.log("post to Transmission");
+            return <IRPCResponse>(await this.axiosInstance.request({
+                data: query,
+                method:"post"
+            })).data.arguments;
         }
         catch (err) {
             if (err.response && err.response.status === 409) {
@@ -432,6 +469,7 @@ export default class Transmission {
                 return await this.callServer(query);
             }
             else{
+                console.error(err);
                 throw new Error(err.response.statusText);
             }
         }
@@ -474,7 +512,7 @@ export default class Transmission {
      * @param {Object} options Optional options for the new torrent
      * @returns {Promise}
      */
-    add(path, options = {}) {
+    add(path, options: IAddConfig = {}) {
         return this.addUrl(path, options)
     }
 
@@ -485,7 +523,7 @@ export default class Transmission {
      * @param {Object} options Optional options for the new torrent
      * @returns {Promise}
      */
-    addFile(filePath, options = {}) {
+    addFile(filePath, options: IAddConfig = {}) {
         const readFile = () => {
             return new Promise((resolve, reject) => {
                 fs.readFile(filePath, (err, data) => {
@@ -508,7 +546,7 @@ export default class Transmission {
      * @param {Object} options Optional options for the new torrent
      * @returns {Promise}
      */
-    addBase64(fileb64, options = {}) {
+    addBase64(fileb64, options: IAddConfig = {}) {
         return this.addTorrentDataSrc({metainfo: fileb64}, options)
     }
 
@@ -519,7 +557,7 @@ export default class Transmission {
      * @param {Object} options Optional options for the new torrent
      * @returns {Promise}
      */
-    addUrl(url: string, options = {}) {
+    addUrl(url: string, options: IAddConfig = {}) {
         return this.addTorrentDataSrc({filename: url}, options)
     }
 
@@ -530,7 +568,7 @@ export default class Transmission {
      * @param {Object} options Optional options for the new torrent
      * @returns {Promise}
      */
-    addTorrentDataSrc(args, options = {}) {
+    addTorrentDataSrc(args, options: IAddConfig = {}) {
         return new Promise((resolve, reject) => {
             if (typeof options !== 'object') {
                 return reject(new Error('Arguments mismatch for "bt.add"'))
@@ -658,9 +696,6 @@ export default class Transmission {
      * @returns {Promise}
      */
     waitForState(id: number, desiredState: TransmissionStatus): Promise<ITorrent> {
-        let latestState = 'unknown';
-        let latestTorrent = null;
-        let targetState;
 
         //start polling
         return new Promise((resolve, reject) => {
@@ -668,34 +703,6 @@ export default class Transmission {
                 if(err) return reject(err);
                 else resolve(torrent);
             });
-
-
-            async.whilst(() => {
-                return latestState !== targetState
-            }, whilstCb => {
-                this.get(id).then(result => {
-                    const torrent = result.torrents[0];
-
-                    if (!torrent) {
-                        return reject(new Error(`No id (${id}) found for torrent`))
-                    }
-
-                    latestTorrent = torrent;
-                    latestState = TransmissionStatus[torrent.status];
-
-                    if (latestState === targetState) {
-                        return whilstCb(null)
-                    }
-
-                    setTimeout(whilstCb, 1000)
-                }).catch(whilstCb)
-            }, err => {
-                if (err) {
-                    return reject(err)
-                }
-
-                resolve(latestTorrent)
-            })
         })
     }
 
@@ -915,34 +922,5 @@ export default class Transmission {
             arguments: {path},
             method: this.methods.other.freeSpace
         })
-    }
-
-    private startPolling(id: number, desiredState: TransmissionStatus, cb: ICallback) {
-        let pollJobs : Array<pollJob>;
-        //check if same job exist
-        if(this.pollJobs.find(job=>job.torrentId===id&&job.desiredState===desiredState)){
-            pollJobs =  this.pollJobs.map(job=>{
-                if(job.torrentId===id&&job.desiredState===desiredState)
-                    job.callBack.push(cb);
-
-                return job;
-            })
-        }
-        else{
-            pollJobs = [
-                ...this.pollJobs,
-                {
-                    torrentId:id,
-                    callBack:[cb],
-                    desiredState
-                }
-            ]
-        }
-
-        this.pollJobs = pollJobs;
-
-        //todo
-        this.polling = true;
-        this.poll();
     }
 }
