@@ -1,0 +1,33 @@
+{
+  "name": "transmission-client",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "tsc && node -r source-map-support/register build/index.js",
+    "debug": "tsc && node -r source-map-support/register %NODE_DEBUG_OPTION% build/index.js",
+    "build": "tsc && git add build",
+    "test": "jest",
+    "test-CI": "jest --ci --coverage",
+    "watch": "jest --env=jsdom --watch"
+  },
+  "author": "Thibaut SEVERAC <https://github.com/thib3113>",
+  "description": "An API client for Transmission",
+  "keywords": [
+    "torrents",
+    "transmission",
+    "bittorrent"
+  ],
+  "repository": "https://github.com/grantholle/transmission",
+  "main": "build/index.js",
+  "license": "MIT",
+  "dependencies": {
+    "async": "^2.6.1",
+    "axios": "^0.18.0",
+    "safe-buffer": "^5.1.2",
+    "uuid": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/async": "^2.0.49",
+    "@types/jest": "^23.3.2",
+    "@types/node": "^10.10.3"
+  }
+}
